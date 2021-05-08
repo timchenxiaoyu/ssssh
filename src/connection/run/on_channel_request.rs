@@ -24,13 +24,13 @@ where
             Type::Shell(..) => self.on_channel_request_shell(channel_request).await,
             Type::Exec(prog) => self.on_channel_request_exec(channel_request, prog).await,
             _ => {
-               // let r = ChannelFailure::new(*channel_request.recipient_channel());
-                let r =  ChannelSuccess::new(*channel_request.recipient_channel());
+                let r = ChannelFailure::new(*channel_request.recipient_channel());
                 self.send(r).await?;
                 Ok(())
             }
         }
     }
+
 
     pub(super) async fn on_channel_request_shell(
         &mut self,
