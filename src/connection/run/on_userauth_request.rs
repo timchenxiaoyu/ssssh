@@ -55,10 +55,12 @@ where
             Method::None => self.on_userauth_none(user_name).await,
 
             Method::Publickey(item) if item.signature().is_none() => {
+                println!("none sig publickey");
                 self.on_userauth_publickey_nosig(user_name, item).await
             }
 
             Method::Publickey(item) if item.signature().is_some() => {
+                println!("sig publickey");
                 self.on_userauth_publickey_sig(userauth_request, user_name, item)
                     .await
             }
