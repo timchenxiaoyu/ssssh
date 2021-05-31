@@ -9,8 +9,10 @@ use futures::ready;
 use thiserror::Error;
 use tokio::io;
 use tokio::net::{lookup_host, TcpListener, TcpStream, ToSocketAddrs};
-use tokio_stream::wrappers::TcpListenerStream;
+use tokio_stream::wrappers::{TcpListenerStream, UnixListenerStream};
 use tokio_stream::Stream;
+
+use tokio::net::{UnixListener,UnixStream};
 
 use crate::connection::{Accept, Connection};
 use crate::preference::{Preference, PreferenceBuilder};
@@ -96,6 +98,25 @@ impl Builder {
         } else {
             Err(BuildError::Unresolved)
         }
+    }
+
+    pub async fn build_uds<P>(
+        &self,
+        addr: P
+    ) -> Result<Server<UnixListenerStream, UnixStream>, BuildError>
+        where
+            P: AsRef<Path>,
+    {
+        let preference = self.preference.build().await?;
+        let preference = Arc::new(preference);
+
+        let io = UnixListener::bind(addr)?;
+        Ok(Server {
+            io: UnixListenerStream::new(io),
+            preference,
+            _stream: PhantomData,
+        })
+
     }
 }
 

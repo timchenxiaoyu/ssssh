@@ -1,7 +1,6 @@
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::process::Stdio;
 
-use futures::future::ok;
 use futures::future::{FutureExt as _, TryFutureExt as _};
 use futures::stream::TryStreamExt as _;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
@@ -14,6 +13,14 @@ use tokio_pipe::{PipeRead, PipeWrite};
 
 use ssssh::Handlers;
 use ssssh::ServerBuilder;
+use std::env;
+use std::path::Path;
+use ssssh::authorized_keys::AuthorizedKeys;
+use std::collections::HashMap;
+use std::sync::{Arc};
+
+use tokio::sync::Mutex;
+use std::time::Duration;
 
 nix::ioctl_write_ptr_bad!(tiocswinsz, nix::libc::TIOCSWINSZ, Winsize);
 
@@ -21,14 +28,40 @@ nix::ioctl_write_ptr_bad!(tiocswinsz, nix::libc::TIOCSWINSZ, Winsize);
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let mut server = ServerBuilder::default().build("[::1]:2222").await?;
+
+    let home = env::var("HOME").unwrap();
+    let path = Path::new(&home).join(".ssh/authorized_keys");
+    let mut file = File::open(path).await?;
+    let authorized_keys = AuthorizedKeys::parse(&mut file).await?;
+    let authorized_keys = authorized_keys
+        .into_iter()
+        .map(|k| (k.publickey().clone(), k))
+        .collect::<HashMap<_, _>>();
+    let authorized_keys = Arc::new(Mutex::new(authorized_keys));
+
+
+    let mut server = ServerBuilder::default()
+        .timeout(Duration::from_secs(500))
+        .build("0.0.0.0:2222")
+        .await?;
+
+    let mut server = ServerBuilder::default().build_uds("/tmp/abc").await?;
     while let Some(conn) = server.try_next().await? {
-        tokio::spawn(
-            async move {
+
+        let authorized_keys = authorized_keys.clone();
+        tokio::spawn(async move {
                 let conn = conn.accept().await?;
                 let mut handlers = Handlers::<anyhow::Error, (PtyMaster, File)>::new();
 
-                handlers.on_auth_none(|_| ok(true).boxed());
+                handlers.on_auth_publickey(move |_, publickey| {
+                    let authorized_keys = authorized_keys.clone();
+                    async move {
+                        let authorized_keys = authorized_keys.clone();
+                        let authorized_keys = authorized_keys.lock().await;
+                        Ok(authorized_keys.contains_key(&publickey))
+                    }.boxed()
+                });
+
                 handlers.on_channel_pty_request(|_, width, height, _, _, _| {
                     async move {
                         let master = posix_openpt(OFlag::O_RDWR | OFlag::O_NOCTTY)?;
